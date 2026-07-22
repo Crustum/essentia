@@ -29,7 +29,7 @@ final class ConsoleOutputHook
         self::$registered = true;
 
         spl_autoload_register(static function (string $class): void {
-            if ($class !== 'Cake\\Console\\ConsoleOutput') {
+            if ($class !== ConsoleOutput::class) {
                 return;
             }
 
@@ -65,7 +65,7 @@ final class ConsoleOutputHook
             }
 
             require_once __DIR__ . '/EssentiaConsoleOutput.php';
-            class_alias(EssentiaConsoleOutput::class, 'Cake\\Console\\ConsoleOutput');
+            class_alias(EssentiaConsoleOutput::class, ConsoleOutput::class);
         }, prepend: true);
     }
 

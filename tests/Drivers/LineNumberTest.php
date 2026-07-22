@@ -19,6 +19,10 @@ it('reports correct line for pest expect() failure', function () use ($pestConfi
 });
 
 it('reports correct line for pest expect() failure via pest --parallel', function () use ($pestConfig): void {
+    if (PHP_VERSION_ID < 80300) {
+        $this->markTestSkipped('Pest --parallel requires PHP 8.3+ Paratest stack');
+    }
+
     $output = decodeOutput(runWith('pest', 'PestFailingTest', extraArgs: ['--parallel'], config: $pestConfig));
 
     expect($output['failures'][0]['line'])->toBe(10)

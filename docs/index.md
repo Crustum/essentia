@@ -27,9 +27,12 @@ It detects when your tools are running inside an AI agent — **Claude Code**, *
 
 ### Requirements
 
-- PHP 8.4+
+- PHP 8.2+
 - CakePHP 5.0+
-- PHPUnit 12–13, Pest 4–5, Paratest, PHPStan, Rector, or PHPCS (as dev dependencies)
+- PHPUnit 11+, Pest 3+, Paratest, PHPStan, Rector, or PHPCS (as dev dependencies)
+
+> [!NOTE]
+> Parallel Paratest (`brianium/paratest` ^7.20) and Pest `--parallel` target PHP 8.3+.
 
 ### Installation via Composer
 

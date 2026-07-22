@@ -9,5 +9,12 @@ parameters:
         - tests/bootstrap.php
         - stubs/VendorConsoleOutput.php
     tmpDir: build/phpstan
+    ignoreErrors:
+        # Older PHPUnit (PHP 8.2) lacks notice event APIs; newer PHPUnit has them. Runtime is fine on both.
+        -
+            message: '#testTriggeredPhpunitNoticeEvents|testRunnerTriggeredNoticeEvents#'
+            identifier: method.notFound
+            path: src/Drivers/Paratest/WrapperRunner.php
+            reportUnmatched: false
 
 services:

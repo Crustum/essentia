@@ -44,6 +44,10 @@ it('pest produces clean json despite large fwrite stdout', function () use ($pes
 });
 
 it('paratest produces valid json despite fwrite stdout noise', function (): void {
+    if (PHP_VERSION_ID < 80300) {
+        $this->markTestSkipped('Paratest driver targets brianium/paratest ^7.20 (PHP 8.3+)');
+    }
+
     $output = decodeOutput(runWith('paratest', 'StdoutStressTest'));
 
     expect($output['result'])->toBe('passed')
@@ -51,6 +55,10 @@ it('paratest produces valid json despite fwrite stdout noise', function (): void
 });
 
 it('paratest produces valid json for failing tests with stdout noise', function (): void {
+    if (PHP_VERSION_ID < 80300) {
+        $this->markTestSkipped('Paratest driver targets brianium/paratest ^7.20 (PHP 8.3+)');
+    }
+
     $output = decodeOutput(runWith('paratest', 'StdoutFailingStressTest'));
 
     expect($output['result'])->toBe('failed')
@@ -59,6 +67,10 @@ it('paratest produces valid json for failing tests with stdout noise', function 
 });
 
 it('pest parallel produces valid json for failing tests with stdout noise', function (): void {
+    if (PHP_VERSION_ID < 80300) {
+        $this->markTestSkipped('Pest --parallel requires PHP 8.3+ Paratest stack');
+    }
+
     $output = decodeOutput(runWith('pest', 'StdoutFailingStressTest', extraArgs: ['--parallel']));
 
     expect($output['result'])->toBe('failed')

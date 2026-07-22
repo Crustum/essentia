@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-$findRoot = function () {
+$findRoot = function (): string {
     $root = dirname(__DIR__);
     if (is_dir($root . '/vendor/cakephp/cakephp')) {
         return $root;
@@ -23,6 +23,7 @@ $findRoot = function () {
 if (!defined('DS')) {
     define('DS', DIRECTORY_SEPARATOR);
 }
+
 define('ROOT', $findRoot());
 define('APP_DIR', 'TestApp');
 define('WEBROOT_DIR', 'webroot');

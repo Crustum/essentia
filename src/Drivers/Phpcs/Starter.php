@@ -139,7 +139,11 @@ final class Starter extends BaseStarter
         $files = [];
 
         foreach ($data['files'] as $path => $file) {
-            if (!is_string($path) || !is_array($file)) {
+            if (!is_string($path)) {
+                continue;
+            }
+
+            if (!is_array($file)) {
                 continue;
             }
 

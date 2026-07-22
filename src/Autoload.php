@@ -110,6 +110,10 @@ register_shutdown_function(static function (): void {
                 JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR,
             ) . PHP_EOL,
         );
+
+        if (($result['result'] ?? '') === 'failed' && (int)($result['tests'] ?? 0) === 0) {
+            exit(1);
+        }
     }
 });
 

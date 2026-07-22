@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 $extraArgs = ['--parallel'];
 
+beforeEach(function (): void {
+    if (PHP_VERSION_ID < 80300) {
+        $this->markTestSkipped('Pest --parallel requires PHP 8.3+ Paratest stack');
+    }
+});
+
 it('outputs json for passing tests', function () use ($extraArgs): void {
     $output = decodeOutput(runWith('pest', 'PassingTest', extraArgs: $extraArgs));
 

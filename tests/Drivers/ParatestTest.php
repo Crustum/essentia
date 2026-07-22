@@ -2,6 +2,12 @@
 
 declare(strict_types=1);
 
+beforeEach(function (): void {
+    if (PHP_VERSION_ID < 80300) {
+        $this->markTestSkipped('Paratest driver targets brianium/paratest ^7.20 (PHP 8.3+)');
+    }
+});
+
 it('outputs json for passing tests', function (): void {
     $output = decodeOutput(runWith('paratest', 'PassingTest'));
 

@@ -8,8 +8,9 @@ use Pest\Plugins\Parallel\Paratest\WrapperRunner;
 use PHPUnit\Event\Code\TestMethod;
 use PHPUnit\Event\Code\Throwable;
 use PHPUnit\Event\Facade as EventFacade;
+use PHPUnit\Event\Test\AfterLastTestMethodErrored;
+use PHPUnit\Event\Test\BeforeFirstTestMethodErrored;
 use PHPUnit\Event\Test\Errored;
-use PHPUnit\Event\Test\Failed;
 use PHPUnit\Event\Test\Finished;
 use PHPUnit\Event\Test\FinishedSubscriber;
 use PHPUnit\Event\Test\Prepared;
@@ -20,7 +21,6 @@ use PHPUnit\Event\TestRunner\ExecutionStarted;
 use PHPUnit\Event\TestRunner\ExecutionStartedSubscriber;
 use PHPUnit\TestRunner\TestResult\Facade as TestResultFacade;
 use PHPUnit\TestRunner\TestResult\TestResult;
-use PHPUnit\TextUI\Configuration\Registry as ConfigurationRegistry;
 use Throwable as PhpThrowable;
 
 /**
@@ -48,7 +48,7 @@ trait TestResultParsableTrait
             };
 
             EventFacade::instance()->registerSubscriber(
-                new readonly class ($markFinished) implements ExecutionFinishedSubscriber
+                new class ($markFinished) implements ExecutionFinishedSubscriber
                 {
                     /**
                      * @param \Closure(): void $markFinished
@@ -164,7 +164,11 @@ trait TestResultParsableTrait
             return $this->testResult;
         }
 
-        if (class_exists(WrapperRunner::class, false) && WrapperRunner::$result instanceof TestResult) {
+        if (
+            class_exists(WrapperRunner::class, false)
+            && property_exists(WrapperRunner::class, 'result')
+            && WrapperRunner::$result instanceof TestResult
+        ) {
             return WrapperRunner::$result;
         }
 
@@ -186,8 +190,6 @@ trait TestResultParsableTrait
      */
     private function parseTestResult(TestResult $testResult): array
     {
-        $failedCount = $testResult->numberOfTestFailedEvents();
-        $erroredCount = $testResult->numberOfTestErroredEvents();
         $skipped = $testResult->numberOfTestSkippedEvents() + $testResult->numberOfTestSkippedByTestSuiteSkippedEvents();
         $incomplete = $testResult->numberOfTestMarkedIncompleteEvents();
         $tests = $testResult->numberOfTestsRun();
@@ -198,71 +200,47 @@ trait TestResultParsableTrait
         $risky = $testResult->numberOfTestsWithTestConsideredRiskyEvents();
         $ignoredByBaseline = $testResult->numberOfIssuesIgnoredByBaseline();
         $hasNoTests = $tests === 0;
-        $noTestsFoundAndFailsOnEmpty = $hasNoTests && $this->failsOnEmptyTestSuite();
 
         $durationMs = ProfileCollector::durationMs();
 
         /** @var list<array{test: string, file: string, line: int, message: string}> $failureDetails */
         $failureDetails = [];
 
-        foreach ($testResult->testFailedEvents() as $event) {
-            $throwable = $event->throwable();
-            $message = trim($throwable->description());
+        foreach ($testResult->testFailedEvents() as $failedEvent) {
+            $detail = $this->mapFailedOrHookEvent($failedEvent);
 
-            if ($event instanceof Failed) {
-                $test = $event->test();
-                $file = $test->file();
-                $line = $test instanceof TestMethod ? $test->line() : 0;
-
-                [$file, $line] = $this->resolveTestLocation($file, $line, $throwable);
-
-                $failureDetails[] = [
-                    'test' => $test instanceof TestMethod ? $test->nameWithClass() : $test->id(),
-                    'file' => $file,
-                    'line' => $line,
-                    'message' => $message,
-                ];
-
-                continue;
+            if ($detail !== null) {
+                $failureDetails[] = $detail;
             }
-
-            [$file, $line] = $this->resolveTestLocation('', 0, $throwable);
-
-            $failureDetails[] = [
-                'test' => $event->testClassName() . '::' . $event->calledMethod()->methodName(),
-                'file' => $file,
-                'line' => $line,
-                'message' => $message,
-            ];
         }
 
         /** @var list<array{test: string, file: string, line: int, message: string}> $errorDetails */
         $errorDetails = [];
 
-        foreach ($testResult->testErroredEvents() as $event) {
-            if ($event instanceof Errored) {
-                $test = $event->test();
-                $throwable = $event->throwable();
-                $message = trim($throwable->message());
-                $file = $test->file();
-                $line = $test instanceof TestMethod ? $test->line() : 0;
+        foreach ($testResult->testErroredEvents() as $erroredEvent) {
+            $detail = $this->mapErroredOrHookEvent($erroredEvent);
 
-                [$file, $line] = $this->resolveTestLocation($file, $line, $throwable);
-
-                $errorDetails[] = [
-                    'test' => $test instanceof TestMethod ? $test->nameWithClass() : $test->id(),
-                    'file' => $file,
-                    'line' => $line,
-                    'message' => $message,
-                ];
+            if ($detail === null) {
+                continue;
             }
+
+            if ($detail['as_failure']) {
+                $failureDetails[] = $detail['item'];
+
+                continue;
+            }
+
+            $errorDetails[] = $detail['item'];
         }
+
+        $failedCount = count($failureDetails);
+        $erroredCount = count($errorDetails);
 
         /** @var array<string, mixed> $result */
         $result = [
-            'result' => $testResult->wasSuccessful() && !$noTestsFoundAndFailsOnEmpty ? 'passed' : 'failed',
+            'result' => $testResult->wasSuccessful() && !$hasNoTests ? 'passed' : 'failed',
             'tests' => $tests,
-            'passed' => $tests - $failedCount - $erroredCount - $skipped,
+            'passed' => max(0, $tests - $failedCount - $erroredCount - $skipped),
             'assertions' => $assertions,
             'duration_ms' => $durationMs,
         ];
@@ -336,17 +314,112 @@ trait TestResultParsableTrait
     }
 
     /**
-     * Check whether PHPUnit is configured to fail on an empty test suite.
+     * Map a PHPUnit failed-event (regular Failed or PHPUnit 12+ hook Failed) to JSON detail.
      *
-     * @return bool
+     * @return array{test: string, file: string, line: int, message: string}|null
      */
-    private function failsOnEmptyTestSuite(): bool
+    private function mapFailedOrHookEvent(object $event): ?array
     {
-        try {
-            return ConfigurationRegistry::get()->failOnEmptyTestSuite();
-        } catch (PhpThrowable) {
-            return true;
+        if (!method_exists($event, 'throwable')) {
+            return null;
         }
+
+        /** @var \PHPUnit\Event\Code\Throwable $throwable */
+        $throwable = $event->throwable();
+        $message = trim($throwable->description());
+
+        if ($message === '') {
+            $message = trim($throwable->message());
+        }
+
+        if (method_exists($event, 'test')) {
+            return $this->detailFromTestBearingEvent($event, $throwable, $message);
+        }
+
+        return $this->detailFromClassMethodHookEvent($event, $throwable, $message);
+    }
+
+    /**
+     * Map a PHPUnit errored-event; hook Errored events are surfaced as failures.
+     *
+     * @return array{as_failure: bool, item: array{test: string, file: string, line: int, message: string}}|null
+     */
+    private function mapErroredOrHookEvent(object $event): ?array
+    {
+        if (!method_exists($event, 'throwable')) {
+            return null;
+        }
+
+        /** @var \PHPUnit\Event\Code\Throwable $throwable */
+        $throwable = $event->throwable();
+        $message = trim($throwable->message());
+
+        if ($message === '') {
+            $message = trim($throwable->description());
+        }
+
+        if (
+            $event instanceof BeforeFirstTestMethodErrored
+            || $event instanceof AfterLastTestMethodErrored
+        ) {
+            $item = $this->detailFromClassMethodHookEvent($event, $throwable, $message);
+
+            return $item === null ? null : ['as_failure' => true, 'item' => $item];
+        }
+
+        if ($event instanceof Errored) {
+            $item = $this->detailFromTestBearingEvent($event, $throwable, $message);
+
+            return $item === null ? null : ['as_failure' => false, 'item' => $item];
+        }
+
+        return null;
+    }
+
+    /**
+     * Build failure/error detail from an event that exposes a test() method.
+     *
+     * @return array{test: string, file: string, line: int, message: string}|null
+     */
+    private function detailFromTestBearingEvent(object $event, Throwable $throwable, string $message): ?array
+    {
+        if (!method_exists($event, 'test')) {
+            return null;
+        }
+
+        $test = $event->test();
+        $file = $test->file();
+        $line = $test instanceof TestMethod ? $test->line() : 0;
+
+        [$file, $line] = $this->resolveTestLocation($file, $line, $throwable);
+
+        return [
+            'test' => $test instanceof TestMethod ? $test->nameWithClass() : $test->id(),
+            'file' => $file,
+            'line' => $line,
+            'message' => $message,
+        ];
+    }
+
+    /**
+     * Build failure/error detail from a class-level hook event (beforeFirst/afterLast).
+     *
+     * @return array{test: string, file: string, line: int, message: string}|null
+     */
+    private function detailFromClassMethodHookEvent(object $event, Throwable $throwable, string $message): ?array
+    {
+        if (!method_exists($event, 'testClassName') || !method_exists($event, 'calledMethod')) {
+            return null;
+        }
+
+        [$file, $line] = $this->resolveTestLocation('', 0, $throwable);
+
+        return [
+            'test' => $event->testClassName() . '::' . $event->calledMethod()->methodName(),
+            'file' => $file,
+            'line' => $line,
+            'message' => $message,
+        ];
     }
 
     /**

@@ -16,15 +16,15 @@
         }
     ],
     "require": {
-        "php": ">=8.3",
+        "php": ">=8.2",
         "cakephp/cakephp": "^5.0",
         "laravel/agent-detector": "^2.0.2"
     },
     "require-dev": {
-        "brianium/paratest": "^7.20.0",
+        "brianium/paratest": "^7.8.5 || ^7.20",
         "cakephp/cakephp-codesniffer": "^5.0",
-        "pestphp/pest": "^4.7.2 || ^5.0.0",
-        "pestphp/pest-plugin-type-coverage": "^4.0.4 || ^5.0.0",
+        "pestphp/pest": "^3.8 || ^4.7.2 || ^5.0.0",
+        "pestphp/pest-plugin-type-coverage": "^3.6 || ^4.0.4 || ^5.0.0",
         "phpstan/phpstan": "^2.2.2",
         "rector/rector": "^2.4.5",
         "symfony/process": "^7.4.8 || ^8.1.0",
@@ -47,13 +47,25 @@
     "scripts": {
         "check": [
             "@cs-check",
+            "@rector-check",
             "@test",
+            "@analyse"
+        ],
+        "fix": [
+            "@cs-fix",
+            "@rector-fix",
+            "@cs-fix",
+            "@analyse"
+        ],
+        "analyse": [
             "@stan"
         ],
         "cs-check": "phpcs -p --standard=phpcs.xml src/",
         "cs-fix": "phpcbf --standard=phpcs.xml src/",
         "test": "pest",
         "test:unit": "pest --testsuite=Unit",
+        "rector-check": "vendor/bin/rector process --dry-run",
+        "rector-fix": "vendor/bin/rector process",
         "stan": "phpstan analyse src/",
         "stan-baseline": "phpstan analyse --generate-baseline"
     },
