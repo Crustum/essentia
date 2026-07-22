@@ -12,6 +12,10 @@ Essentia only activates when it detects an AI agent. When you or your team run t
 
 See [Versions.md](docs/Versions.md) for the supported CakePHP versions.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## Documentation
 
 For documentation, as well as tutorials, see the [docs](docs/index.md) directory of this repository.
