@@ -76,6 +76,11 @@ function runWith(
     return $process;
 }
 
+function normalizePath(string $path): string
+{
+    return str_replace('\\', '/', $path);
+}
+
 function cleanOutput(string $raw): string
 {
     $raw = str_replace("\r", '', $raw);
@@ -116,6 +121,23 @@ function runPhpstan(string $configPath, bool $withAgent = true, array $extraArgs
 }
 
 /**
+ * @param list<string> $args
+ * @return \Symfony\Component\Process\Process
+ */
+function runPhpstanRaw(array $args, bool $withAgent = true): Process
+{
+    $process = new Process(
+        command: [PHP_BINARY, 'vendor/bin/phpstan', ...$args],
+        cwd: dirname(__DIR__),
+        env: isolatedProcessEnvironment($withAgent),
+    );
+
+    $process->run();
+
+    return $process;
+}
+
+/**
  * @param list<string> $extraArgs
  * @return \Symfony\Component\Process\Process
  */
@@ -131,6 +153,29 @@ function runRector(string $configPath, bool $withAgent = true, array $extraArgs 
 
     $process = new Process(
         command: $command,
+        cwd: dirname(__DIR__),
+        env: $env,
+    );
+
+    $process->run();
+
+    return $process;
+}
+
+/**
+ * @param list<string> $args
+ * @return \Symfony\Component\Process\Process
+ */
+function runRectorRaw(array $args, bool $withAgent = true): Process
+{
+    $env = [
+        'AI_AGENT' => $withAgent ? '1' : false,
+        'CLAUDECODE' => false,
+        'CLAUDE_CODE' => false,
+    ];
+
+    $process = new Process(
+        command: [PHP_BINARY, 'vendor/bin/rector', ...$args],
         cwd: dirname(__DIR__),
         env: $env,
     );

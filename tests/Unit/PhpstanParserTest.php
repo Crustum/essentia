@@ -4,25 +4,37 @@ declare(strict_types=1);
 
 use Crustum\Essentia\Drivers\Phpstan\Starter;
 use Crustum\Essentia\UserFilters\CaptureFilter;
+use Crustum\Essentia\UserFilters\StderrCaptureFilter;
 
-function phpstanParse(string $input): ?array
+function phpstanParse(string $input, string $stderr = ''): ?array
 {
     CaptureFilter::reset();
+    StderrCaptureFilter::reset();
 
     if (! in_array('agent_output_capture', stream_get_filters(), true)) {
         stream_filter_register('agent_output_capture', CaptureFilter::class);
     }
 
-    $filter = stream_filter_append(STDOUT, 'agent_output_capture', STREAM_FILTER_WRITE);
-    fwrite(STDOUT, $input);
+    if (! in_array('agent_output_stderr_capture', stream_get_filters(), true)) {
+        stream_filter_register('agent_output_stderr_capture', StderrCaptureFilter::class);
+    }
 
-    if (is_resource($filter)) {
-        stream_filter_remove($filter);
+    $filter = stream_filter_append(STDOUT, 'agent_output_capture', STREAM_FILTER_WRITE);
+    $stderrFilter = stream_filter_append(STDERR, 'agent_output_stderr_capture', STREAM_FILTER_WRITE);
+
+    fwrite(STDOUT, $input);
+    fwrite(STDERR, $stderr);
+
+    foreach ([$filter, $stderrFilter] as $appended) {
+        if (is_resource($appended)) {
+            stream_filter_remove($appended);
+        }
     }
 
     $result = (new Starter)->parse();
 
     CaptureFilter::reset();
+    StderrCaptureFilter::reset();
 
     return $result;
 }
@@ -31,12 +43,53 @@ it('returns null for empty string', function (): void {
     expect(phpstanParse(''))->toBeNull();
 });
 
-it('returns null for invalid json', function (): void {
-    expect(phpstanParse('not json'))->toBeNull();
+it('surfaces raw output for invalid json instead of staying silent', function (): void {
+    $result = phpstanParse('not json');
+
+    expect($result)->not->toBeNull()
+        ->and($result['raw'])->toBe(['not json'])
+        ->and($result)->not->toHaveKey('result')
+        ->and($result)->not->toHaveKey('errors');
 });
 
-it('returns null for json without totals', function (): void {
-    expect(phpstanParse('{"foo":"bar"}'))->toBeNull();
+it('surfaces raw output for json without totals', function (): void {
+    $result = phpstanParse('{"foo":"bar"}');
+
+    expect($result)->not->toBeNull()
+        ->and($result['raw'])->toBe(['{"foo":"bar"}'])
+        ->and($result)->not->toHaveKey('result');
+});
+
+it('surfaces raw output written to stderr', function (): void {
+    $result = phpstanParse('', 'config file does not exist');
+
+    expect($result)->not->toBeNull()
+        ->and($result['raw'])->toBe(['config file does not exist']);
+});
+
+it('surfaces both streams when each one carries output', function (): void {
+    $result = phpstanParse('not json', 'config file does not exist');
+
+    expect($result)->not->toBeNull()
+        ->and($result['raw'])->toBe(['config file does not exist', 'not json']);
+});
+
+it('splits raw fallback output into one entry per line', function (): void {
+    $result = phpstanParse("first line\n\n   second line   \nthird line");
+
+    expect($result['raw'])->toBe(['first line', 'second line', 'third line']);
+});
+
+it('splits both streams into lines, stderr first', function (): void {
+    $result = phpstanParse("out one\nout two", "err one\nerr two");
+
+    expect($result['raw'])->toBe(['err one', 'err two', 'out one', 'out two']);
+});
+
+it('drops blank lines from raw fallback output', function (): void {
+    $result = phpstanParse("\n\n  \nonly line\n \n");
+
+    expect($result['raw'])->toBe(['only line']);
 });
 
 it('returns passed for zero errors', function (): void {
@@ -370,4 +423,106 @@ it('handles multiple files with multiple errors', function (): void {
         ->and($result['error_details']['/src/Foo.php'])->toHaveCount(2)
         ->and($result['error_details'])->toHaveKey('/src/Bar.php')
         ->and($result['error_details']['/src/Bar.php'])->toHaveCount(1);
+});
+
+/**
+ * @param array<int, string> $argv
+ */
+function phpstanShouldTransform(array $argv): bool
+{
+    $method = new ReflectionMethod(Starter::class, 'shouldTransform');
+
+    /** @var bool $result */
+    $result = $method->invoke(new Starter, $argv);
+
+    return $result;
+}
+
+it('transforms the analyse command', function (string $command): void {
+    expect(phpstanShouldTransform(['phpstan', $command, 'src']))->toBeTrue();
+})->with(['analyse', 'analyze']);
+
+it('transforms when no command is given and analyse is the default', function (array $argv): void {
+    expect(phpstanShouldTransform($argv))->toBeTrue();
+})->with([
+    [['phpstan']],
+    [['phpstan', '-cphpstan.neon']],
+    [['phpstan', '--level=8']],
+    [['phpstan', '-v']],
+]);
+
+it('ignores paths given without a command, matching how phpstan reads them', function (): void {
+    expect(phpstanShouldTransform(['phpstan', '--level=8', 'src']))->toBeFalse();
+});
+
+it('ignores every other phpstan command', function (string $command): void {
+    expect(phpstanShouldTransform(['phpstan', $command]))->toBeFalse();
+})->with([
+    'clear-result-cache',
+    'diagnose',
+    'dump-parameters',
+    'bisect',
+    'worker',
+    'fixer:worker',
+    'completion',
+    '_complete',
+    'help',
+    'list',
+]);
+
+it('ignores invocations that do not produce a json report', function (array $argv): void {
+    expect(phpstanShouldTransform($argv))->toBeFalse();
+})->with([
+    [['phpstan', 'analyse', '--generate-baseline']],
+    [['phpstan', 'analyse', '--generate-baseline', 'baseline.neon']],
+    [['phpstan', 'analyse', '--generate-baseline=baseline.neon']],
+    [['phpstan', 'analyse', '-b']],
+    [['phpstan', 'analyse', '-bbaseline.neon']],
+    [['phpstan', 'analyse', '--fix']],
+    [['phpstan', 'analyse', '--watch']],
+    [['phpstan', 'analyse', '--pro']],
+]);
+
+it('only inspects the arguments belonging to the analyse command', function (): void {
+    expect(phpstanShouldTransform(['/opt/-b/vendor/bin/phpstan', 'analyse', 'src']))->toBeTrue()
+        ->and(phpstanShouldTransform(['phpstan', '-bbaseline.neon', 'analyse', 'src']))->toBeFalse();
+});
+
+/**
+ * @param array<int, string> $argv
+ * @return array<int, string>
+ */
+function phpstanRewriteArgv(array $argv): array
+{
+    $starter = new Starter;
+
+    /** @var array<int, string> $argv */
+    $argv = (new ReflectionMethod(Starter::class, 'ensureErrorFormatJson'))->invoke($starter, $argv);
+
+    /** @var array<int, string> $argv */
+    $argv = (new ReflectionMethod(Starter::class, 'ensureNoProgress'))->invoke($starter, $argv);
+
+    return $argv;
+}
+
+it('appends its options to the end of the arguments', function (): void {
+    expect(phpstanRewriteArgv(['phpstan', 'analyse', 'src']))
+        ->toBe(['phpstan', 'analyse', 'src', '--error-format=json', '--no-progress']);
+});
+
+it('keeps its options before the end of options separator', function (): void {
+    expect(phpstanRewriteArgv(['phpstan', 'analyse', '--', 'src']))
+        ->toBe(['phpstan', 'analyse', '--error-format=json', '--no-progress', '--', 'src']);
+});
+
+it('replaces an error format the caller already passed', function (array $argv): void {
+    expect(phpstanRewriteArgv($argv))->toBe(['phpstan', 'analyse', '--error-format=json', '--no-progress']);
+})->with([
+    [['phpstan', 'analyse', '--error-format=table']],
+    [['phpstan', 'analyse', '--error-format', 'table']],
+]);
+
+it('does not repeat the no progress flag the caller already passed', function (): void {
+    expect(phpstanRewriteArgv(['phpstan', 'analyse', '--no-progress']))
+        ->toBe(['phpstan', 'analyse', '--no-progress', '--error-format=json']);
 });

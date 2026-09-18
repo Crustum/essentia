@@ -34,12 +34,34 @@ final class Starter extends BaseStarter
     {
         /** @var array<int, string> $argv */
         $argv = $_SERVER['argv'];
+
+        if (!$this->shouldTransform($argv)) {
+            return;
+        }
+
         $argv = $this->ensureOutputFormatJson($argv);
         $_SERVER['argv'] = $argv;
         $GLOBALS['argv'] = $argv;
 
         $this->outputBufferLevel = ob_get_level();
         ob_start();
+    }
+
+    /**
+     * Determine whether the invocation is a process command.
+     *
+     * @param array<int, string> $argv
+     * @return bool
+     */
+    private function shouldTransform(array $argv): bool
+    {
+        $command = $this->commandName($argv);
+
+        if ($command === null || in_array($command, ['process', 'p'], true)) {
+            return true;
+        }
+
+        return file_exists($command) || str_starts_with($argv[1] ?? '', '-');
     }
 
     /**
@@ -65,8 +87,16 @@ final class Starter extends BaseStarter
         $data = json_decode($captured, associative: true);
 
         if (!is_array($data) || !is_array($data['totals'] ?? null)) {
+            $fatalErrors = is_array($data) ? $this->fatalErrors($data) : [];
+
+            if ($fatalErrors !== []) {
+                return [
+                    'result' => 'failed',
+                    'fatal_errors' => $fatalErrors,
+                ];
+            }
+
             return [
-                'result' => 'failed',
                 'raw' => [$captured],
             ];
         }
@@ -76,7 +106,6 @@ final class Starter extends BaseStarter
 
         if (!is_int($changedFiles) || !is_int($errors)) {
             return [
-                'result' => 'failed',
                 'raw' => [$captured],
             ];
         }
@@ -84,6 +113,29 @@ final class Starter extends BaseStarter
         return [
             'result' => $errors > 0 || ($changedFiles > 0 && $this->isDryRun()) ? 'failed' : 'passed',
         ] + $data;
+    }
+
+    /**
+     * Extract fatal error strings from Rector JSON output.
+     *
+     * @param array<string, mixed> $data
+     * @return list<string>
+     */
+    private function fatalErrors(array $data): array
+    {
+        if (!is_array($data['fatal_errors'] ?? null)) {
+            return [];
+        }
+
+        $errors = [];
+
+        foreach ($data['fatal_errors'] as $error) {
+            if (is_string($error) && trim($error) !== '') {
+                $errors[] = trim($error);
+            }
+        }
+
+        return $errors;
     }
 
     /**
@@ -143,9 +195,7 @@ final class Starter extends BaseStarter
             $filtered[] = $arg;
         }
 
-        $filtered[] = '--output-format=json';
-
-        return $filtered;
+        return $this->addOption($filtered, '--output-format=json');
     }
 
     /**

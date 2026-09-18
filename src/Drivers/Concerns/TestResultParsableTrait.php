@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 namespace Crustum\Essentia\Drivers\Concerns;
 
+use Boundwize\StructArmed\Rule\RuleViolationCollection;
 use Closure;
+use Crustum\Essentia\StructArmed\StructArmedCollector;
 use Pest\Plugins\Parallel\Paratest\WrapperRunner;
 use PHPUnit\Event\Code\TestMethod;
 use PHPUnit\Event\Code\Throwable;
@@ -31,6 +33,8 @@ use Throwable as PhpThrowable;
  */
 trait TestResultParsableTrait
 {
+    private const int STACK_TRACE_LIMIT = 5;
+
     public ?TestResult $testResult = null;
 
     private bool $executionFinished = false;
@@ -203,7 +207,7 @@ trait TestResultParsableTrait
 
         $durationMs = ProfileCollector::durationMs();
 
-        /** @var list<array{test: string, file: string, line: int, message: string}> $failureDetails */
+        /** @var list<array{test: string, file: string, line: int, message: string, trace?: list<string>}> $failureDetails */
         $failureDetails = [];
 
         foreach ($testResult->testFailedEvents() as $failedEvent) {
@@ -214,7 +218,7 @@ trait TestResultParsableTrait
             }
         }
 
-        /** @var list<array{test: string, file: string, line: int, message: string}> $errorDetails */
+        /** @var list<array{test: string, file: string, line: int, message: string, trace?: list<string>}> $errorDetails */
         $errorDetails = [];
 
         foreach ($testResult->testErroredEvents() as $erroredEvent) {
@@ -310,13 +314,45 @@ trait TestResultParsableTrait
             $result['profile'] = array_slice($profileEntries, 0, 10);
         }
 
+        $structArmed = $this->structArmedResult();
+
+        if ($structArmed !== null) {
+            $result['structarmed'] = $structArmed;
+
+            if (!$structArmed['passed']) {
+                $result['result'] = 'failed';
+            }
+        }
+
         return $result;
+    }
+
+    /**
+     * Surface StructArmed violations collected by the PHPUnit extension.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function structArmedResult(): ?array
+    {
+        $collection = StructArmedCollector::get();
+
+        if (!$collection instanceof RuleViolationCollection) {
+            return null;
+        }
+
+        StructArmedCollector::reset();
+
+        return [
+            'passed' => $collection->isEmpty(),
+            'total' => $collection->count(),
+            'violations' => $collection->toArray(),
+        ];
     }
 
     /**
      * Map a PHPUnit failed-event (regular Failed or PHPUnit 12+ hook Failed) to JSON detail.
      *
-     * @return array{test: string, file: string, line: int, message: string}|null
+     * @return array{test: string, file: string, line: int, message: string, trace?: list<string>}|null
      */
     private function mapFailedOrHookEvent(object $event): ?array
     {
@@ -342,7 +378,7 @@ trait TestResultParsableTrait
     /**
      * Map a PHPUnit errored-event; hook Errored events are surfaced as failures.
      *
-     * @return array{as_failure: bool, item: array{test: string, file: string, line: int, message: string}}|null
+     * @return array{as_failure: bool, item: array{test: string, file: string, line: int, message: string, trace?: list<string>}}|null
      */
     private function mapErroredOrHookEvent(object $event): ?array
     {
@@ -379,7 +415,7 @@ trait TestResultParsableTrait
     /**
      * Build failure/error detail from an event that exposes a test() method.
      *
-     * @return array{test: string, file: string, line: int, message: string}|null
+     * @return array{test: string, file: string, line: int, message: string, trace?: list<string>}|null
      */
     private function detailFromTestBearingEvent(object $event, Throwable $throwable, string $message): ?array
     {
@@ -393,18 +429,19 @@ trait TestResultParsableTrait
 
         [$file, $line] = $this->resolveTestLocation($file, $line, $throwable);
 
-        return [
-            'test' => $test instanceof TestMethod ? $test->nameWithClass() : $test->id(),
-            'file' => $file,
-            'line' => $line,
-            'message' => $message,
-        ];
+        return $this->buildTestDetail(
+            $test instanceof TestMethod ? $test->nameWithClass() : $test->id(),
+            $file,
+            $line,
+            $message,
+            $throwable,
+        );
     }
 
     /**
      * Build failure/error detail from a class-level hook event (beforeFirst/afterLast).
      *
-     * @return array{test: string, file: string, line: int, message: string}|null
+     * @return array{test: string, file: string, line: int, message: string, trace?: list<string>}|null
      */
     private function detailFromClassMethodHookEvent(object $event, Throwable $throwable, string $message): ?array
     {
@@ -414,12 +451,87 @@ trait TestResultParsableTrait
 
         [$file, $line] = $this->resolveTestLocation('', 0, $throwable);
 
-        return [
-            'test' => $event->testClassName() . '::' . $event->calledMethod()->methodName(),
+        return $this->buildTestDetail(
+            $event->testClassName() . '::' . $event->calledMethod()->methodName(),
+            $file,
+            $line,
+            $message,
+            $throwable,
+        );
+    }
+
+    /**
+     * Build a failure/error detail array with an optional stack trace.
+     *
+     * @param string $test Test identifier.
+     * @param string $file Failure file path.
+     * @param int $line Failure line number.
+     * @param string $message Failure message.
+     * @param \PHPUnit\Event\Code\Throwable $throwable Thrown exception.
+     * @return array{test: string, file: string, line: int, message: string, trace?: list<string>}
+     */
+    private function buildTestDetail(
+        string $test,
+        string $file,
+        int $line,
+        string $message,
+        Throwable $throwable,
+    ): array {
+        $trace = $this->stackTraceFrames($throwable);
+
+        foreach ($trace as $frame) {
+            if (str_starts_with($frame, $file . ':')) {
+                $line = (int)substr($frame, strlen($file) + 1);
+
+                break;
+            }
+        }
+
+        $detail = [
+            'test' => $test,
             'file' => $file,
             'line' => $line,
             'message' => $message,
         ];
+
+        if ($trace !== [] && $trace !== [$file . ':' . $line]) {
+            $detail['trace'] = $trace;
+        }
+
+        return $detail;
+    }
+
+    /**
+     * Extract vendor-filtered stack trace frames for a throwable.
+     *
+     * @param \PHPUnit\Event\Code\Throwable $throwable Thrown exception.
+     * @return list<string>
+     */
+    private function stackTraceFrames(Throwable $throwable): array
+    {
+        $frames = array_values(array_filter(
+            array_map(trim(...), explode("\n", $throwable->stackTrace())),
+            static fn(string $frame): bool => $frame !== '',
+        ));
+
+        $frames = array_values(array_filter(
+            $frames,
+            fn(string $frame, int $index): bool => $index === 0 || !$this->isVendorFrame($frame),
+            ARRAY_FILTER_USE_BOTH,
+        ));
+
+        return array_slice($frames, 0, self::STACK_TRACE_LIMIT);
+    }
+
+    /**
+     * Check if a stack trace frame points inside vendor code.
+     *
+     * @param string $frame Stack trace frame.
+     * @return bool
+     */
+    private function isVendorFrame(string $frame): bool
+    {
+        return str_contains($frame, '/vendor/') || str_contains($frame, '\\vendor\\');
     }
 
     /**

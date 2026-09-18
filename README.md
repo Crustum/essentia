@@ -8,7 +8,7 @@ Essentia only activates when it detects an AI agent. When you or your team run t
 
 ## Requirements
 
-* PHP 8.2+
+* PHP 8.3+
 
 See [Versions.md](docs/Versions.md) for the supported CakePHP versions.
 

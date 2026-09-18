@@ -4,7 +4,9 @@ declare(strict_types=1);
 namespace Crustum\Essentia\Drivers\Phpstan;
 
 use Crustum\Essentia\Drivers\Starter as BaseStarter;
+use Crustum\Essentia\OutputCleaner;
 use Crustum\Essentia\UserFilters\CaptureFilter;
+use Crustum\Essentia\UserFilters\StderrCaptureFilter;
 
 /**
  * PHPStan driver starter.
@@ -31,16 +33,84 @@ final class Starter extends BaseStarter
      */
     public function start(): void
     {
-        $this->registerNullFilter();
-        $this->silenceStderr();
-
         /** @var array<int, string> $argv */
         $argv = $_SERVER['argv'];
+
+        if (!$this->shouldTransform($argv)) {
+            return;
+        }
+
+        $this->captureStderr();
+
         $argv = $this->ensureErrorFormatJson($argv);
         $argv = $this->ensureNoProgress($argv);
         $_SERVER['argv'] = $argv;
 
         $this->silenceStdout();
+    }
+
+    /**
+     * Determine whether the invocation should produce a JSON report.
+     *
+     * @param array<int, string> $argv
+     * @return bool
+     */
+    private function shouldTransform(array $argv): bool
+    {
+        $arguments = $this->analyseArguments($argv);
+
+        return $arguments !== null && $this->producesJsonReport($arguments);
+    }
+
+    /**
+     * Extract arguments belonging to the analyse command.
+     *
+     * @param array<int, string> $argv
+     * @return array<int, string>|null
+     */
+    private function analyseArguments(array $argv): ?array
+    {
+        $command = $this->commandName($argv);
+
+        if ($command !== null && !in_array($command, ['analyse', 'analyze'], true)) {
+            return null;
+        }
+
+        $arguments = [];
+        $skipped = false;
+
+        foreach (array_slice($argv, 1) as $arg) {
+            if (!$skipped && $arg === $command) {
+                $skipped = true;
+
+                continue;
+            }
+
+            $arguments[] = $arg;
+        }
+
+        return $arguments;
+    }
+
+    /**
+     * Determine whether the arguments produce a JSON report.
+     *
+     * @param array<int, string> $arguments
+     * @return bool
+     */
+    private function producesJsonReport(array $arguments): bool
+    {
+        foreach ($arguments as $arg) {
+            if (in_array($arg, ['--fix', '--watch', '--pro'], true)) {
+                return false;
+            }
+
+            if (str_starts_with($arg, '--generate-baseline') || str_starts_with($arg, '-b')) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -54,8 +124,12 @@ final class Starter extends BaseStarter
 
         CaptureFilter::reset();
 
+        $stderr = trim(StderrCaptureFilter::output());
+
+        StderrCaptureFilter::reset();
+
         if ($captured === '') {
-            return null;
+            return $this->fallback($stderr);
         }
 
         $start = strpos($captured, '{');
@@ -68,7 +142,7 @@ final class Starter extends BaseStarter
         $data = json_decode($captured, associative: true);
 
         if (!is_array($data) || !isset($data['totals'])) {
-            return null;
+            return $this->fallback($stderr, $captured);
         }
 
         /** @var array<string, list<array{line: int, message: string, identifier: string, ignorable?: bool, tip?: string}>> $errorDetails */
@@ -134,6 +208,34 @@ final class Starter extends BaseStarter
         }
 
         return $result;
+    }
+
+    /**
+     * Surface raw output lines from stderr and stdout.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function fallback(string $stderr, string $stdout = ''): ?array
+    {
+        $lines = [];
+
+        foreach ([$stderr, $stdout] as $output) {
+            foreach (explode("\n", OutputCleaner::clean($output)) as $line) {
+                $line = trim($line);
+
+                if ($line !== '') {
+                    $lines[] = $line;
+                }
+            }
+        }
+
+        if ($lines === []) {
+            return null;
+        }
+
+        return [
+            'raw' => $lines,
+        ];
     }
 
     /**
@@ -223,9 +325,7 @@ final class Starter extends BaseStarter
             $filtered[] = $arg;
         }
 
-        $filtered[] = '--error-format=json';
-
-        return $filtered;
+        return $this->addOption($filtered, '--error-format=json');
     }
 
     /**
@@ -236,10 +336,10 @@ final class Starter extends BaseStarter
      */
     private function ensureNoProgress(array $argv): array
     {
-        if (!in_array('--no-progress', $argv, true)) {
-            $argv[] = '--no-progress';
+        if (in_array('--no-progress', $argv, true)) {
+            return $argv;
         }
 
-        return $argv;
+        return $this->addOption($argv, '--no-progress');
     }
 }

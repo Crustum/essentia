@@ -125,6 +125,31 @@ it('outputs json for multiple failures and errors', function (): void {
         ->and($output['error_details'])->toHaveCount(1);
 });
 
+it('reports the failing line and includes stack traces for failures', function (): void {
+    $output = decodeOutput(runWith('pest', 'SharedHelperTest'));
+
+    expect($output['failures'][0]['line'])->toBe(14)
+        ->and(normalizePath($output['failures'][0]['trace'][0]))->toEndWith('Support/ChecksTotals.php:13')
+        ->and($output['failures'][0]['trace'][1])->toEndWith('SharedHelperTest.php:14');
+});
+
+it('includes stack traces for failures inside nested closures', function (): void {
+    $output = decodeOutput(runWith('pest', 'PestTraceTest', config: 'tests/Fixtures/Pest/phpunit.xml'));
+
+    expect($output['failures'][0]['line'])->toBe(7)
+        ->and($output['failures'][0]['trace'])->toHaveCount(2)
+        ->and($output['failures'][0]['trace'][0])->toEndWith('PestTraceTest.php:7')
+        ->and($output['failures'][0]['trace'][1])->toEndWith('PestTraceTest.php:6');
+});
+
+it('includes stack traces for failures inside nested closures via pest --parallel', function (): void {
+    $output = decodeOutput(runWith('pest', 'PestTraceTest', extraArgs: ['--parallel'], config: 'tests/Fixtures/Pest/phpunit.xml'));
+
+    expect($output['failures'][0]['line'])->toBe(7)
+        ->and($output['failures'][0]['trace'])->toHaveCount(2)
+        ->and($output['failures'][0]['trace'][0])->toEndWith('PestTraceTest.php:7');
+});
+
 it('outputs normal pest output when no agent is detected', function (): void {
     $process = runWith('pest', 'PassingTest', withAgent: false);
 
@@ -145,3 +170,10 @@ it('outputs normal pest output when ESSENTIA_FORCE is falsy without an agent', f
     expect($process->getOutput())->not->toContain('"result"')
         ->and($process->getOutput())->toContain('passed');
 })->with(['0', 'false']);
+
+it('does not repeat an output flag the caller already passed', function (string $flag): void {
+    $process = runWith('pest', 'PassingTest', extraArgs: [$flag]);
+
+    expect($process->getExitCode())->toBe(0)
+        ->and(decodeOutput($process)['result'])->toBe('passed');
+})->with(['--no-output', '--no-progress']);

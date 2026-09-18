@@ -4,12 +4,13 @@
 - [Installation](#installation)
 - [How It Works](#how-it-works)
 - [Supported Tools](#supported-tools)
-- [Before & After](#before--after)
-- [PHPUnit, Pest & Paratest](#phpunit-pest--paratest)
-- [PHPStan](#phpstan)
-- [Rector](#rector)
-- [PHPCS](#phpcs)
-- [CakePHP Console](#cakephp-console)
+    - [Before & After](#before--after)
+    - [PHPUnit, Pest & Paratest](#phpunit-pest--paratest)
+    - [PHPStan](#phpstan)
+    - [Rector](#rector)
+    - [PHPCS](#phpcs)
+    - [StructArmed](#structarmed)
+    - [CakePHP Console](#cakephp-console)
 - [Environment Variables](#environment-variables)
 - [Disabling Essentia](#disabling-essentia)
 
@@ -27,12 +28,9 @@ It detects when your tools are running inside an AI agent — **Claude Code**, *
 
 ### Requirements
 
-- PHP 8.2+
+- PHP 8.4+
 - CakePHP 5.0+
-- PHPUnit 11+, Pest 3+, Paratest, PHPStan, Rector, or PHPCS (as dev dependencies)
-
-> [!NOTE]
-> Parallel Paratest (`brianium/paratest` ^7.20) and Pest `--parallel` target PHP 8.3+.
+- PHPUnit 12–13, Pest 4–5, Paratest, PHPStan, Rector, or PHPCS (as dev dependencies)
 
 ### Installation via Composer
 
@@ -71,6 +69,7 @@ When no agent is detected, Essentia does nothing — your tools behave exactly a
 | PHPStan | `phpstan` | Structured JSON |
 | Rector | `rector` | Structured JSON |
 | PHPCS | `phpcs` | Structured JSON |
+| StructArmed | `structarmed` | Structured JSON |
 | CakePHP console | `cake` | Cleaned text (no JSON) |
 
 <a name="before--after"></a>
@@ -238,6 +237,56 @@ When issues are found, only files with errors or warnings are included:
 }
 ```
 
+<a name="structarmed"></a>
+## StructArmed
+
+[StructArmed](https://github.com/boundwize/structarmed) architecture violations are surfaced in two ways.
+
+### As a CLI driver
+
+A run with 1 layer violation goes from this:
+
+```
+StructArmed 0.15.36 — Architecture Enforcement
+================================================
+
+Found 1 violation(s):
+────────────────────────────────────────────────
+
+✗  [ruleset.Core]
+   Class [App\Core\CoreViolator] in layer [Core] must not depend on [App\Service\Service] which belongs to layer [Service]
+   → src/Core/CoreViolator.php:9
+   Layer: Core
+
+────────────────────────────────────────────────
+1 violation(s) found  •  0.01s
+```
+
+To this:
+
+```json
+{"tool":"structarmed","result":"failed","total":1,"violations":[{"rule":"ruleset.Core","message":"Class [App\\Core\\CoreViolator] in layer [Core] must not depend on [App\\Service\\Service] which belongs to layer [Service]","file":"src/Core/CoreViolator.php","line":9,"class":"App\\Core\\CoreViolator","layer":"Core"}],"elapsed":0.01}
+```
+
+### Inside a PHPUnit run
+
+Register `Crustum\Essentia\StructArmed\StructArmedExtension` in `phpunit.xml` and each run's violations are appended to the test JSON as a `structarmed` key (and mark the run failed):
+
+```xml
+<extensions>
+    <bootstrap class="Crustum\Essentia\StructArmed\StructArmedExtension">
+        <parameter name="config" value="structarmed.php"/>
+        <parameter name="progress" value="false"/>
+    </bootstrap>
+</extensions>
+```
+
+```json
+{"tool":"phpunit","result":"failed","tests":129,"passed":129,"structarmed":{"passed":false,"total":1,"violations":[{"rule":"ruleset.Core","message":"...","file":"src/Core/CoreViolator.php","line":9,"class":"...","layer":"Core"}]}}
+```
+
+Requires `boundwize/structarmed` as a dev dependency.
+
 <a name="cakephp-console"></a>
 ## CakePHP Console
 
@@ -292,6 +341,18 @@ To disable Essentia for a single command:
 ESSENTIA_DISABLE=1 composer test
 ```
 
+On Windows (PowerShell):
+
+```powershell
+$env:ESSENTIA_DISABLE='1'; composer test
+```
+
+On Windows (CMD):
+
+```cmd
+set ESSENTIA_DISABLE=1&& composer test
+```
+
 To disable Essentia for an entire session:
 
 ```bash
@@ -302,4 +363,10 @@ On Windows (PowerShell):
 
 ```powershell
 $env:ESSENTIA_DISABLE='1'
+```
+
+On Windows (CMD):
+
+```cmd
+set ESSENTIA_DISABLE=1
 ```

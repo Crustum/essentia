@@ -13,7 +13,7 @@ use Laravel\AgentDetector\AgentResult;
  *
  * @internal
  * @codeCoverageIgnore
- * @phpstan-type TestDetail array{test: string, file: string, line: int, message: string}
+ * @phpstan-type TestDetail array{test: string, file: string, line: int, message: string, trace?: list<string>}
  * @phpstan-type ProfileEntry array{test: string, file: string, duration_ms: int}
  * @phpstan-type Result array{
  *   result: 'passed'|'failed',
@@ -21,9 +21,9 @@ use Laravel\AgentDetector\AgentResult;
  *   passed: int,
  *   duration_ms: int,
  *   failed?: int,
- *   failures?: list<array{test: string, file: string, line: int, message: string}>,
+ *   failures?: list<array{test: string, file: string, line: int, message: string, trace?: list<string>}>,
  *   errors?: int,
- *   error_details?: list<array{test: string, file: string, line: int, message: string}>,
+ *   error_details?: list<array{test: string, file: string, line: int, message: string, trace?: list<string>}>,
  *   skipped?: int,
  *   profile?: list<array{test: string, file: string, duration_ms: int}>,
  *   raw?: list<string>
@@ -75,6 +75,7 @@ final class Execution
             'phpstan', 'phpstan.phar' => new Drivers\Phpstan\Starter(),
             'phpunit' => new Drivers\Phpunit\Starter(),
             'rector' => new Drivers\Rector\Starter(),
+            'structarmed' => new Drivers\Structarmed\Starter(),
             default => self::resolveCakeConsoleStarter($argv),
         };
 

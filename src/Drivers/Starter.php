@@ -8,6 +8,7 @@ use Crustum\Essentia\Execution;
 use Crustum\Essentia\UserFilters\CaptureFilter;
 use Crustum\Essentia\UserFilters\CleanFilter;
 use Crustum\Essentia\UserFilters\NullFilter;
+use Crustum\Essentia\UserFilters\StderrCaptureFilter;
 
 /**
  * Base driver starter utilities.
@@ -101,6 +102,22 @@ abstract class Starter implements Driver
     }
 
     /**
+     * Attach the stderr capture filter to collect stderr output.
+     *
+     * @return void
+     */
+    protected function captureStderr(): void
+    {
+        if (!in_array('agent_output_stderr_capture', stream_get_filters(), true)) {
+            stream_filter_register('agent_output_stderr_capture', StderrCaptureFilter::class);
+        }
+
+        StderrCaptureFilter::reset();
+
+        stream_filter_append(STDERR, 'agent_output_stderr_capture', STREAM_FILTER_WRITE);
+    }
+
+    /**
      * Save the current stdout stream handle for later restore.
      *
      * @return void
@@ -110,6 +127,44 @@ abstract class Starter implements Driver
         $execution = Execution::current();
 
         $execution->stdout = fopen('php://stdout', 'w') ?: STDOUT;
+    }
+
+    /**
+     * Get the first non-option argument, treated as the command name.
+     *
+     * @param array<int, string> $argv
+     * @return string|null
+     */
+    protected function commandName(array $argv): ?string
+    {
+        foreach (array_slice($argv, 1) as $arg) {
+            if (!str_starts_with($arg, '-')) {
+                return $arg;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Append an option, keeping it before the end-of-options separator.
+     *
+     * @param array<int, string> $argv
+     * @return array<int, string>
+     */
+    protected function addOption(array $argv, string $option): array
+    {
+        $separator = array_search('--', $argv, true);
+
+        if (!is_int($separator)) {
+            $argv[] = $option;
+
+            return $argv;
+        }
+
+        array_splice($argv, $separator, 0, [$option]);
+
+        return $argv;
     }
 
     /**
